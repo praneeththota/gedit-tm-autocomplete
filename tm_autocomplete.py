@@ -20,6 +20,9 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 #
 
+__version__ = '1.0'
+__author__ = 'Kevin McGuinness'
+
 import gedit
 import gtk
 import re
