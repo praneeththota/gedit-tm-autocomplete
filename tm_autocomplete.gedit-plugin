@@ -3,7 +3,8 @@ Loader=python
 Module=tm_autocomplete
 IAge=2
 Name=TextMate Style Autocompletion
+Icon=tm_autocomplete
 Description=Gedit Plugin for TextMate style autocompletion. Tap 'Esc' to cycle through the available completions
 Authors=Kevin McGuinness <kevin.mcguinness@gmail.com>
 Copyright=Copyright © 2010 Kevin McGuinness
-
+Website=http://code.google.com/p/gedit-tm-autocomplete/

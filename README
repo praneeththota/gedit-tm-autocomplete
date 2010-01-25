@@ -1,0 +1,9 @@
+TextMate style autocompletion for Gedit
+=======================================
+
+Gedit Plugin for TextMate style autocompletion. Tap 'Esc' to cycle through the available completions
+
+Installation
+------------
+
+Run install.sh or copy tm_* to ~/gnome2/gedit/plugins.

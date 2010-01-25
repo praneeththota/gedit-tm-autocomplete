@@ -20,7 +20,7 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 #
 
-__version__ = '1.0'
+__version__ = '1.0.1'
 __author__ = 'Kevin McGuinness'
 
 import gedit
@@ -173,8 +173,7 @@ class AutoCompletionPlugin(gedit.Plugin):
         id1 = view.connect('key-press-event', self.on_key_press, doc)
         id2 = view.connect('button-press-event', self.on_button_press, doc)
         setattr(view, 'autocomplete_handlers', (id1, id2))
-     
-    
+   
   def on_key_press(self, view, event, doc):
     if event.keyval == gtk.keysyms.Escape:
       if not self.autocompleter:
@@ -192,7 +191,3 @@ class AutoCompletionPlugin(gedit.Plugin):
     if self.autocompleter:
       self.autocompleter = None
     return False
-
-
-
-

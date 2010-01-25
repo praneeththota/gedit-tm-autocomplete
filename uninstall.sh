@@ -14,4 +14,6 @@ if [ -f $PLUGIN_FOLDER/tm_autocomplete.gedit-plugin ]; then
   rm $PLUGIN_FOLDER/tm_autocomplete.gedit-plugin
 fi
 
-
+if [ -f $PLUGIN_FOLDER/tm_autocomplete.png ]; then
+  rm $PLUGIN_FOLDER/tm_autocomplete.png
+fi
