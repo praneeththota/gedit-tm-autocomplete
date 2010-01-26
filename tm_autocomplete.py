@@ -32,6 +32,7 @@ class AutoCompleter(object):
 
   WordRegex = re.compile(r'\w+')
   IgnoreUnderscore = True
+  ValidScopes = ('document', 'window', 'application')
 
   __slots__ = (
     'doc',       # The document autocomplete was initiated on
@@ -41,21 +42,38 @@ class AutoCompleter(object):
     'iter_s',    # GtkTextIterator pointing to the start of word being completed
     'iter_i',    # GtkTextIterator pointing to insertion point
     'iter_e',    # GtkTextIterator pointing to end of last insertion
+    'scope',     # Search scope (document|application|window)
   )
 
-  def __init__(self, doc):
+  def __init__(self, doc, scope='document'):
     """Create an autocompleter for the document. Indexes the words in the 
-       document and builds a list of matches for the current cursor position.
-       Calling insert_next_completion will cycle through the matches, replacing
-       the last match inserted (if any).
+       current scope and builds a list of matches for the current cursor 
+       position. Calling insert_next_completion will cycle through the matches,
+       replacing the last match inserted (if any).
     """
+    self.scope = scope
     self.reindex(doc)
     
   def _get_words(self, doc):
-    """Returns all words in a document"""
-    text = doc.get_text(doc.get_start_iter(), doc.get_end_iter())
-    return set(self.WordRegex.findall(text))
-    
+    """Returns all words in the current scope"""
+    words = set()
+    # Subfunction to index a single document
+    def _index(document):
+      text = document.get_text(
+        document.get_start_iter(), 
+        document.get_end_iter())
+      words.update(self.WordRegex.findall(text))
+    if self.scope == 'application':
+      # Index all documents open in any gedit window
+      map(_index, gedit.app_get_default().get_documents())
+    elif self.scope == 'window':
+      # Index all documents in this gedit window
+      map(_index, gedit.app_get_default().get_active_window().get_documents())
+    else:
+      # Index just this document
+      _index(doc)
+    return words
+      
   def _get_iter_for_beginning_of_word_at(self, iter1):
     """Returns a GtkTextIter pointing to the start of the current word"""
     if not self.IgnoreUnderscore:
@@ -151,8 +169,10 @@ class AutoCompletionPlugin(gedit.Plugin):
 
   def __init__(self):
     self.autocompleter = None
+    self.trigger = gtk.keysyms.Escape
+    self.scope = 'document'
     gedit.Plugin.__init__(self)
-    
+ 
   def activate(self, window):
     self.update_ui(window)
     
@@ -175,9 +195,9 @@ class AutoCompletionPlugin(gedit.Plugin):
         setattr(view, 'autocomplete_handlers', (id1, id2))
    
   def on_key_press(self, view, event, doc):
-    if event.keyval == gtk.keysyms.Escape:
+    if event.keyval == self.trigger:
       if not self.autocompleter:
-        self.autocompleter = AutoCompleter(doc)
+        self.autocompleter = AutoCompleter(doc, self.scope)
       if self.autocompleter and self.autocompleter.has_completions():
         self.autocompleter.insert_next_completion()
       else:
@@ -191,3 +211,4 @@ class AutoCompletionPlugin(gedit.Plugin):
     if self.autocompleter:
       self.autocompleter = None
     return False
+
