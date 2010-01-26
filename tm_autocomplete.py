@@ -20,12 +20,13 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 #
 
-__version__ = '1.0.1'
+__version__ = '1.0.2'
 __author__ = 'Kevin McGuinness'
 
 import gedit
 import gtk
 import re
+import gconf
 
 class AutoCompleter(object):
   """Class that actually does the autocompletion"""
@@ -166,6 +167,10 @@ class AutoCompleter(object):
 
 class AutoCompletionPlugin(gedit.Plugin):
   """TextMate style autocompletion plugin for Gedit"""
+  
+  
+  # Where our configuration data is held
+  ConfigRoot = '/apps/gedit-2/plugins/tm_autocomplete'
 
   def __init__(self):
     self.autocompleter = None
@@ -174,6 +179,7 @@ class AutoCompletionPlugin(gedit.Plugin):
     gedit.Plugin.__init__(self)
  
   def activate(self, window):
+    self.gconf_activate()
     self.update_ui(window)
     
   def deactivate(self, window):
@@ -182,6 +188,7 @@ class AutoCompletionPlugin(gedit.Plugin):
         view.disconnect(handler_id)
       setattr(view, 'autocomplete_handlers_attached', False)
     self.autocompleter = None   
+    self.gconf_deactivate()
     
   def update_ui(self, window):
     view = window.get_active_view()
@@ -211,4 +218,49 @@ class AutoCompletionPlugin(gedit.Plugin):
     if self.autocompleter:
       self.autocompleter = None
     return False
+    
+  def set_scope(self, scope):
+    if scope != self.scope and scope in AutoCompleter.ValidScopes:
+      print 'changing scope %s -> %s' % (self.scope, scope)
+      self.scope = scope
+      self.autocompleter = None
+      return True
+    return False
+  
+  def gconf_activate(self):
+    self.gconf_client = gconf.client_get_default()
+    self.gconf_client.add_dir(self.ConfigRoot, gconf.CLIENT_PRELOAD_NONE)
+    self.notify_id = self.gconf_client.notify_add(
+      self.ConfigRoot, self.gconf_event)
+    if not self.gconf_client.dir_exists(self.ConfigRoot):
+      self.gconf_set_defaults(self.gconf_client)
+    else:
+      self.gconf_configure(self.gconf_client)
+      
+  def gconf_deactivate(self):
+    self.gconf_client.notify_remove(self.notify_id)
+    del self.notify_id
+    del self.gconf_client
+    
+  def gconf_key_for(self, name):
+    return '/'.join([self.ConfigRoot, name])
+  
+  def gconf_set_defaults(self, client):
+    def set_string(name, value):
+      client.set_string(self.gconf_key_for(name), value)
+    set_string('scope', 'document')
+    client.suggest_sync()
+  
+  def gconf_configure(self, client):
+    def get_string(name, default=None):
+      value = client.get_string(self.gconf_key_for(name))
+      return value if value is not None else default
+    self.set_scope(get_string('scope'))
+    
+  def gconf_event(self, client, cnxn_id, entry, user_data):
+    key, value = entry.get_key(), entry.get_value()
+    name = key.split('/')[-1]
+    if name == 'scope' and value is not None:
+      self.set_scope(value.get_string())
+    
 
