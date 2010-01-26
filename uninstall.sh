@@ -2,6 +2,7 @@
 
 PLUGIN_FOLDER=~/.gnome2/gedit/plugins/
 
+# Uninstall plugin
 if [ -f $PLUGIN_FOLDER/tm_autocomplete.py ]; then
   rm $PLUGIN_FOLDER/tm_autocomplete.py
 fi
@@ -14,6 +15,4 @@ if [ -f $PLUGIN_FOLDER/tm_autocomplete.gedit-plugin ]; then
   rm $PLUGIN_FOLDER/tm_autocomplete.gedit-plugin
 fi
 
-if [ -f $PLUGIN_FOLDER/tm_autocomplete.png ]; then
-  rm $PLUGIN_FOLDER/tm_autocomplete.png
-fi
+
