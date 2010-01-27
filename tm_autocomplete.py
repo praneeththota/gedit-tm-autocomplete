@@ -18,7 +18,7 @@
 # You should have received a copy of the GNU General Public License along with
 # this program; if not, write to the Free Software Foundation, Inc., 51
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
-#
+# 
 
 __version__ = '1.0.2'
 __author__ = 'Kevin McGuinness'
@@ -221,7 +221,7 @@ class AutoCompletionPlugin(gedit.Plugin):
     
   def set_scope(self, scope):
     if scope != self.scope and scope in AutoCompleter.ValidScopes:
-      print 'changing scope %s -> %s' % (self.scope, scope)
+      #print 'changing scope %s -> %s' % (self.scope, scope)
       self.scope = scope
       self.autocompleter = None
       return True
@@ -262,5 +262,72 @@ class AutoCompletionPlugin(gedit.Plugin):
     name = key.split('/')[-1]
     if name == 'scope' and value is not None:
       self.set_scope(value.get_string())
+      
+  def is_configurable(self):
+    return True
+
+  def create_configure_dialog(self):
+    dialog = ConfigurationDialog(self.gconf_client,self.ConfigRoot)
+    return dialog
     
+
+class ConfigurationDialog(gtk.Dialog):
+  Title = 'Autocompletion settings'
+  ScopeKey = 'scope'
+  ScopeFrameText = '<b>Autocomplete using words from:</b>'
+  ScopeDocText = 'The current document only'
+  ScopeWinText = 'All open documents in the current window'
+  ScopeAppText = 'All open documents in the application'
+
+  def __init__(self, gconf_client, config_root):
+    gtk.Dialog.__init__(self, self.Title, None, gtk.DIALOG_DESTROY_WITH_PARENT)
+    self.gconf_client = gconf_client
+    self.config_root = config_root
+    self.set_resizable(False)
+    close_button = self.add_button(gtk.STOCK_CLOSE, gtk.RESPONSE_CLOSE)
+    close_button.grab_default()
+    close_button.connect('clicked', self.on_close, None)
+    frame = gtk.Frame(self.ScopeFrameText)
+    frame.set_shadow_type(gtk.SHADOW_NONE)
+    frame.get_label_widget().set_use_markup(True)
+    frame.set_border_width(10)
+    scope_box = gtk.VBox(False, 0)
+    scope_box.set_border_width(5)
+    
+    def scope_radio(text, scope, group=None):
+      btn = gtk.RadioButton(group, text)
+      btn.set_data(self.ScopeKey, scope)
+      btn.connect('toggled', self.configuration_change, gconf_client)
+      btn.set_active(self._gconf_get_string(self.ScopeKey) == scope)
+      scope_box.pack_start(btn)
+      return btn
+    btn1 = scope_radio(self.ScopeDocText, 'document')
+    btn2 = scope_radio(self.ScopeWinText, 'window', btn1)
+    btn3 = scope_radio(self.ScopeAppText, 'application', btn2)
+    frame.add(scope_box)
+    self.vbox.pack_start(frame)
+    self.vbox.show_all()
+    self.show()
+
+  def on_close(self, widget, data=None):
+    self.gconf_client.suggest_sync()
+    gtk.Widget.destroy(self)
+	
+  def _gconf_set_string(self, name, value):
+    key = '/'.join((self.config_root, name))
+    if self.gconf_client.get_string(key) != value:
+      self.gconf_client.set_string(key, value)
+      return True
+    return False
+    
+  def _gconf_get_string(self, name, default=None):
+    key = '/'.join((self.config_root, name))
+    value = self.gconf_client.get_string(key)
+    return value if value is not None else default
+	
+  def configuration_change(self, widget, data=None):
+    scope = widget.get_data(self.ScopeKey)
+    if scope is not None and scope in AutoCompleter.ValidScopes:
+      self._gconf_set_string(self.ScopeKey, scope)
+	
 
