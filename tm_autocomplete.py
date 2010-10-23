@@ -5,6 +5,9 @@
 #
 # Copyright © 2010, Kevin McGuinness <kevin.mcguinness@gmail.com>
 #
+# Thanks to Dan Gindikin <dgindikin@gmail.com> for the proximity based search 
+# code, and most recent match promotion
+#
 # This program is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
 # Foundation; either version 2 of the License, or (at your option) any later
@@ -19,6 +22,7 @@
 # this program; if not, write to the Free Software Foundation, Inc., 51
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 # 
+#
 
 __version__ = '1.0.3'
 __author__ = 'Kevin McGuinness'
@@ -28,12 +32,30 @@ import gtk
 import re
 import gconf
 
+def uniq_order_preserved(v):
+  z, s = [], set()
+  for x in v:
+    if x not in s:
+      s.add(x)
+      z.append(x)
+  return z
+    
+def zip_no_truncation(v,w):
+  z = []
+  for i in range(max(len(v),len(w))):
+    if i < len(v):
+      z.append(v[i])
+    if i < len(w):
+      z.append(w[i])
+  return z
+
 class AutoCompleter(object):
   """Class that actually does the autocompletion"""
 
-  WordRegex = re.compile(r'\w+')
   IgnoreUnderscore = True
   ValidScopes = ('document', 'window', 'application')
+  ValidOrders = ('alphabetical', 'proximity')
+  LastAcceptedMatch = None
 
   __slots__ = (
     'doc',       # The document autocomplete was initiated on
@@ -44,36 +66,26 @@ class AutoCompleter(object):
     'iter_i',    # GtkTextIterator pointing to insertion point
     'iter_e',    # GtkTextIterator pointing to end of last insertion
     'scope',     # Search scope (document|application|window)
+    'order',     # Result list ordering (proximity|alphabetical)
+    'promote',   # Promote last accepted match
   )
 
-  def __init__(self, doc, scope='document'):
+  def __init__(self, doc, scope='document', order='alphabetical', 
+    promote=False):
     """Create an autocompleter for the document. Indexes the words in the 
        current scope and builds a list of matches for the current cursor 
        position. Calling insert_next_completion will cycle through the matches,
        replacing the last match inserted (if any).
+       
+       If order is 'alphabetical' then the autocompletion list is ordered 
+       alphabetically. If order is 'proximity' then the autocompletion list
+       is ordered based on distance from the cursor in the current document,
+       with the other open documents being ordered alphabetcially.
     """
     self.scope = scope
+    self.order = order
+    self.promote = promote
     self.reindex(doc)
-    
-  def _get_words(self, doc):
-    """Returns all words in the current scope"""
-    words = set()
-    # Subfunction to index a single document
-    def _index(document):
-      text = document.get_text(
-        document.get_start_iter(), 
-        document.get_end_iter())
-      words.update(self.WordRegex.findall(text))
-    if self.scope == 'application':
-      # Index all documents open in any gedit window
-      map(_index, gedit.app_get_default().get_documents())
-    elif self.scope == 'window':
-      # Index all documents in this gedit window
-      map(_index, gedit.app_get_default().get_active_window().get_documents())
-    else:
-      # Index just this document
-      _index(doc)
-    return words
       
   def _get_iter_for_beginning_of_word_at(self, iter1):
     """Returns a GtkTextIter pointing to the start of the current word"""
@@ -103,11 +115,78 @@ class AutoCompleter(object):
       if not i.starts_sentence() and i.backward_char() and i.get_char() == '_':
         return True
     return False
-    
-  def _get_candidate_matches(self, doc, word):
+  
+  def _get_current_doc_words_sorted_by_proximity(self, regex):
+    """Returns the words in the current document sorted by distance from 
+       cursor. 
+    """
+    fwd_text = self.doc.get_text(self.iter_i, self.doc.get_end_iter())
+    bck_text = self.doc.get_text(self.doc.get_start_iter(), self.iter_s)
+    fwd_words = regex.findall(fwd_text)
+    bck_words = regex.findall(bck_text)
+    bck_words.reverse()
+    all_words = zip_no_truncation(bck_words, fwd_words)
+    return uniq_order_preserved(all_words)
+  
+  def _get_current_doc_words(self, regex):
+    """Returns an unsorted list of words in the current document. The given 
+       regex is used to match the words.
+    """
+    iter1 = self.doc.get_start_iter()
+    iter2 = self.doc.get_end_iter()
+    text = self.doc.get_text(iter1, iter2)
+    words = set(regex.findall(text))
+    return list(words)
+
+  def _get_other_doc_words(self, regex):
+    """Returns an unsorted list of words in the non-current document based
+       on the selected scope. The given regex is used to match the words.
+    """
+    if self.scope == 'application':
+      # Index all documents open in any gedit window
+      docs = gedit.app_get_default().get_documents()
+    elif self.scope == 'window':
+      # Index all documents in this gedit window
+      docs = gedit.app_get_default().get_active_window().get_documents()
+    else:
+      # No other documents in use
+      docs = []
+    words = set()
+    for doc in docs:
+      if doc != self.doc:
+        text = doc.get_text(doc.get_start_iter(), doc.get_end_iter())
+        words.update(regex.findall(text))
+    return list(words)
+
+  def _create_regex_for_prefix(self, prefix):
+    """Compiles a regular expression that matches words beginning with the 
+       given prefix. If the prefix is empty, a match-any-word regular 
+       expression is created.
+    """
+    return re.compile(r'\b' + prefix + r'\w+\b')
+
+  def _get_candidate_matches(self, doc, prefix):
     """Returns all words in the document that match the given word"""
-    return [w for w in self._get_words(doc) if w.startswith(word) ]
-    
+    regex = self._create_regex_for_prefix(prefix)
+    if self.order == 'alphabetical':
+      # Alphabetical sort
+      words = self._get_current_doc_words(regex)
+      other = self._get_other_doc_words(regex) 
+      words.extend(other)
+      words.sort()
+    else:
+      # Proximity sort in current doc, alphabetical in others
+      words = self._get_current_doc_words_sorted_by_proximity(regex)
+      other = self._get_other_doc_words(regex) 
+      other.sort()
+      words.extend(other)
+    return uniq_order_preserved(words)
+  
+  def _should_promote_last_accepted(self, prefix):
+    last = AutoCompleter.LastAcceptedMatch
+    return (last is not None and self.promote and  
+      len(prefix) > len(last) and last.startswith(prefix))
+  
   def reindex(self, doc):
     """Compile a list of candidate words for autocompletion"""
     self.doc = doc
@@ -121,7 +200,9 @@ class AutoCompleter(object):
       self.iter_e = self.iter_i.copy()
       self.word = doc.get_text(self.iter_s, self.iter_i)
       self.matches = self._get_candidate_matches(doc, self.word)
-      self.matches.sort()
+      if self._should_promote_last_accepted(self.word):
+        self.matches.remove(self.LastAcceptedMatch)
+        self.matches.insert(0, self.LastAcceptedMatch)
     return len(self.matches) > 0
       
   def has_completions(self):
@@ -136,9 +217,6 @@ class AutoCompleter(object):
     if insert_ok:
       self.doc.begin_user_action()
       
-      # Next completion
-      self.index = self.index + 1 if self.index + 1 < len(self.matches) else 0
-      
       # Store insertion offset
       insertion_point = self.iter_i.get_offset()
       
@@ -151,6 +229,7 @@ class AutoCompleter(object):
       match = self.matches[self.index]
       completion = match[len(self.word):]
       self.doc.insert(self.iter_i, completion, len(completion))
+      AutoCompleter.LastAcceptedMatch = match
             
       # Update iterators
       self.iter_i = self.doc.get_iter_at_offset(insertion_point)
@@ -161,13 +240,16 @@ class AutoCompleter(object):
       
       # Move cursor
       self.doc.place_cursor(self.iter_e)
+      
+      # Next completion
+      self.index = self.index + 1 if self.index + 1 < len(self.matches) else 0
       self.doc.end_user_action()
+      
     return insert_ok
        
 
 class AutoCompletionPlugin(gedit.Plugin):
   """TextMate style autocompletion plugin for Gedit"""
-  
   
   # Where our configuration data is held
   ConfigRoot = '/apps/gedit-2/plugins/tm_autocomplete'
@@ -176,6 +258,8 @@ class AutoCompletionPlugin(gedit.Plugin):
     self.autocompleter = None
     self.trigger = gtk.keysyms.Escape
     self.scope = 'document'
+    self.order = 'alphabetical'
+    self.promote_last_accepted = False
     gedit.Plugin.__init__(self)
  
   def activate(self, window):
@@ -204,7 +288,8 @@ class AutoCompletionPlugin(gedit.Plugin):
   def on_key_press(self, view, event, doc):
     if event.keyval == self.trigger:
       if not self.autocompleter:
-        self.autocompleter = AutoCompleter(doc, self.scope)
+        self.autocompleter = AutoCompleter(doc, self.scope, self.order,
+          self.promote_last_accepted)
       if self.autocompleter and self.autocompleter.has_completions():
         self.autocompleter.insert_next_completion()
       else:
@@ -221,12 +306,25 @@ class AutoCompletionPlugin(gedit.Plugin):
     
   def set_scope(self, scope):
     if scope != self.scope and scope in AutoCompleter.ValidScopes:
-      #print 'changing scope %s -> %s' % (self.scope, scope)
       self.scope = scope
       self.autocompleter = None
       return True
     return False
-  
+
+  def set_order(self, order):
+    if order != self.order and order in AutoCompleter.ValidOrders:
+      self.order = order
+      self.autocompleter = None
+      return True
+    return False
+
+  def set_promote_last_accepted(self, promote_last_accepted):
+    if self.promote_last_accepted != promote_last_accepted:
+      self.promote_last_accepted = promote_last_accepted
+      self.autocompleter = None
+      return True
+    return False
+
   def gconf_activate(self):
     self.gconf_client = gconf.client_get_default()
     self.gconf_client.add_dir(self.ConfigRoot, gconf.CLIENT_PRELOAD_NONE)
@@ -248,20 +346,32 @@ class AutoCompletionPlugin(gedit.Plugin):
   def gconf_set_defaults(self, client):
     def set_string(name, value):
       client.set_string(self.gconf_key_for(name), value)
+    def set_bool(name, value):
+      client.set_bool(self.gconf_key_for(name), value)
     set_string('scope', 'document')
+    set_string('order', 'alphabetical')
+    set_bool('promote', False)
     client.suggest_sync()
   
   def gconf_configure(self, client):
     def get_string(name, default=None):
       value = client.get_string(self.gconf_key_for(name))
       return value if value is not None else default
+    def get_bool(name):
+      return client.get_bool(self.gconf_key_for(name))
     self.set_scope(get_string('scope'))
+    self.set_order(get_string('order'))
+    self.set_promote_last_accepted(get_bool('promote'))
     
   def gconf_event(self, client, cnxn_id, entry, user_data):
     key, value = entry.get_key(), entry.get_value()
     name = key.split('/')[-1]
     if name == 'scope' and value is not None:
       self.set_scope(value.get_string())
+    elif name == 'order' and value is not None:
+      self.set_order(value.get_string())
+    elif name == 'promote' and value is not None:
+      self.set_promote_last_accepted(value.get_bool())
       
   def is_configurable(self):
     return True
@@ -278,6 +388,12 @@ class ConfigurationDialog(gtk.Dialog):
   ScopeDocText = 'The current document only'
   ScopeWinText = 'All open documents in the current window'
   ScopeAppText = 'All open documents in the application'
+  OrderKey = 'order'
+  OrderFrameText = '<b>Sort autocompletion list:</b>'
+  OrderAlphaText = 'In alphabetical order'
+  OrderProximityText = 'Based on distance from cursor'
+  PromoteKey = 'promote'
+  PromoteLastText = 'Promote last accepted match'
 
   def __init__(self, gconf_client, config_root):
     gtk.Dialog.__init__(self, self.Title, None, gtk.DIALOG_DESTROY_WITH_PARENT)
@@ -286,18 +402,18 @@ class ConfigurationDialog(gtk.Dialog):
     self.set_resizable(False)
     close_button = self.add_button(gtk.STOCK_CLOSE, gtk.RESPONSE_CLOSE)
     close_button.grab_default()
-    close_button.connect('clicked', self.on_close, None)
+    close_button.connect('clicked', self.on_close, None)  
+    # Scope configuration
     frame = gtk.Frame(self.ScopeFrameText)
     frame.set_shadow_type(gtk.SHADOW_NONE)
     frame.get_label_widget().set_use_markup(True)
     frame.set_border_width(10)
     scope_box = gtk.VBox(False, 0)
     scope_box.set_border_width(5)
-    
     def scope_radio(text, scope, group=None):
       btn = gtk.RadioButton(group, text)
       btn.set_data(self.ScopeKey, scope)
-      btn.connect('toggled', self.configuration_change, gconf_client)
+      btn.connect('toggled', self.scope_configuration_change, gconf_client)
       btn.set_active(self._gconf_get_string(self.ScopeKey) == scope)
       scope_box.pack_start(btn)
       return btn
@@ -305,7 +421,30 @@ class ConfigurationDialog(gtk.Dialog):
     btn2 = scope_radio(self.ScopeWinText, 'window', btn1)
     btn3 = scope_radio(self.ScopeAppText, 'application', btn2)
     frame.add(scope_box)
+    self.vbox.pack_start(frame)    
+    # Order configuration
+    frame = gtk.Frame(self.OrderFrameText)
+    frame.set_shadow_type(gtk.SHADOW_NONE)
+    frame.get_label_widget().set_use_markup(True)
+    frame.set_border_width(10)
+    order_box = gtk.VBox(False, 0)
+    order_box.set_border_width(5)
+    def order_radio(text, order, group=None):
+      btn = gtk.RadioButton(group, text)
+      btn.set_data(self.OrderKey, order)
+      btn.connect('toggled', self.order_configuration_change, gconf_client)
+      btn.set_active(self._gconf_get_string(self.OrderKey) == order)
+      order_box.pack_start(btn)
+      return btn
+    btn1 = order_radio(self.OrderAlphaText, 'alphabetical')
+    btn2 = order_radio(self.OrderProximityText, 'proximity', btn1)
+    btn3 = gtk.CheckButton(self.PromoteLastText)
+    btn3.connect('toggled', self.promote_configuration_change, gconf_client)
+    btn3.set_active(self._gconf_get_bool(self.PromoteKey))
+    order_box.pack_start(btn3)
+    frame.add(order_box)
     self.vbox.pack_start(frame)
+    # Show
     self.vbox.show_all()
     self.show()
 
@@ -319,15 +458,33 @@ class ConfigurationDialog(gtk.Dialog):
       self.gconf_client.set_string(key, value)
       return True
     return False
-    
+  
   def _gconf_get_string(self, name, default=None):
     key = '/'.join((self.config_root, name))
     value = self.gconf_client.get_string(key)
     return value if value is not None else default
+
+  def _gconf_set_bool(self, name, value):
+    key = '/'.join((self.config_root, name))
+    if self.gconf_client.get_bool(key) != value:
+      self.gconf_client.set_bool(key, value)
+      return True
+    return False
+
+  def _gconf_get_bool(self, name, default=None):
+    key = '/'.join((self.config_root, name))
+    value = self.gconf_client.get_bool(key)
+    return value if value is not None else default
 	
-  def configuration_change(self, widget, data=None):
+  def scope_configuration_change(self, widget, data=None):
     scope = widget.get_data(self.ScopeKey)
     if scope is not None and scope in AutoCompleter.ValidScopes:
       self._gconf_set_string(self.ScopeKey, scope)
 	
-
+  def order_configuration_change(self, widget, data=None):
+    order = widget.get_data(self.OrderKey)
+    if order is not None and order in AutoCompleter.ValidOrders:
+      self._gconf_set_string(self.OrderKey, order)
+  
+  def promote_configuration_change(self, widget, data=None):
+    self._gconf_set_bool(self.PromoteKey, widget.get_active())
