@@ -258,8 +258,8 @@ class AutoCompletionPlugin(gedit.Plugin):
     self.autocompleter = None
     self.trigger = gtk.keysyms.Escape
     self.scope = 'document'
-    self.order = 'alphabetical'
-    self.promote_last_accepted = False
+    self.order = 'proximity'
+    self.promote_last_accepted = True
     gedit.Plugin.__init__(self)
 
   def activate(self, window):
@@ -349,8 +349,8 @@ class AutoCompletionPlugin(gedit.Plugin):
     def set_bool(name, value):
       client.set_bool(self.gconf_key_for(name), value)
     set_string('scope', 'document')
-    set_string('order', 'alphabetical')
-    set_bool('promote', False)
+    set_string('order', 'proximity')
+    set_bool('promote', True)
     client.suggest_sync()
 
   def gconf_configure(self, client):
