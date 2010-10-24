@@ -39,7 +39,7 @@ def uniq_order_preserved(v):
       s.add(x)
       z.append(x)
   return z
-    
+
 def zip_no_truncation(v,w):
   z = []
   for i in range(max(len(v),len(w))):
@@ -76,7 +76,7 @@ class AutoCompleter(object):
        current scope and builds a list of matches for the current cursor 
        position. Calling insert_next_completion will cycle through the matches,
        replacing the last match inserted (if any).
-       
+
        If order is 'alphabetical' then the autocompletion list is ordered 
        alphabetically. If order is 'proximity' then the autocompletion list
        is ordered based on distance from the cursor in the current document,
@@ -86,11 +86,11 @@ class AutoCompleter(object):
     self.order = order
     self.promote = promote
     self.reindex(doc)
-      
+
   def _get_iter_for_beginning_of_word_at(self, iter1):
     """Returns a GtkTextIter pointing to the start of the current word"""
     if not self.IgnoreUnderscore:
-      # Just use pango's word start facility 
+      # Just use pango's word start facility
       result = iter1.copy()
       result.backward_word_start()
     else:
@@ -105,7 +105,7 @@ class AutoCompleter(object):
           break
       result = i 
     return result
-    
+
   def _can_autocomplete_at(self, iter1):
     """Returns true if autocompletion can be done at the given iterator"""
     if iter1.ends_word() or iter1.inside_word():
@@ -115,10 +115,10 @@ class AutoCompleter(object):
       if not i.starts_sentence() and i.backward_char() and i.get_char() == '_':
         return True
     return False
-  
+
   def _get_current_doc_words_sorted_by_proximity(self, regex):
     """Returns the words in the current document sorted by distance from 
-       cursor. 
+       cursor.
     """
     fwd_text = self.doc.get_text(self.iter_i, self.doc.get_end_iter())
     bck_text = self.doc.get_text(self.doc.get_start_iter(), self.iter_s)
@@ -127,7 +127,7 @@ class AutoCompleter(object):
     bck_words.reverse()
     all_words = zip_no_truncation(bck_words, fwd_words)
     return uniq_order_preserved(all_words)
-  
+
   def _get_current_doc_words(self, regex):
     """Returns an unsorted list of words in the current document. The given 
        regex is used to match the words.
@@ -181,12 +181,12 @@ class AutoCompleter(object):
       other.sort()
       words.extend(other)
     return uniq_order_preserved(words)
-  
+
   def _should_promote_last_accepted(self, prefix):
     last = AutoCompleter.LastAcceptedMatch
-    return (last is not None and self.promote and  
+    return (last is not None and self.promote and
       len(prefix) > len(last) and last.startswith(prefix))
-  
+
   def reindex(self, doc):
     """Compile a list of candidate words for autocompletion"""
     self.doc = doc
@@ -204,11 +204,11 @@ class AutoCompleter(object):
         self.matches.remove(self.LastAcceptedMatch)
         self.matches.insert(0, self.LastAcceptedMatch)
     return len(self.matches) > 0
-      
+
   def has_completions(self):
     """Returns true if we can do autocompletion"""
     return 0 <= self.index < len(self.matches)
-    
+
   def insert_next_completion(self):
     """Insert the next autocompletion into the document and move the cursor
        to the end of the completion. The previous autocompletion is removed.
@@ -224,13 +224,13 @@ class AutoCompleter(object):
       if not self.iter_i.equal(self.iter_e):
         self.doc.delete(self.iter_i, self.iter_e)
         self.iter_i = self.doc.get_iter_at_offset(insertion_point)
-        
+      
       # Insert new completion
       match = self.matches[self.index]
       completion = match[len(self.word):]
       self.doc.insert(self.iter_i, completion, len(completion))
       AutoCompleter.LastAcceptedMatch = match
-            
+      
       # Update iterators
       self.iter_i = self.doc.get_iter_at_offset(insertion_point)
       self.iter_e = self.iter_i.copy()
@@ -244,13 +244,13 @@ class AutoCompleter(object):
       # Next completion
       self.index = self.index + 1 if self.index + 1 < len(self.matches) else 0
       self.doc.end_user_action()
-      
+    
     return insert_ok
-       
+
 
 class AutoCompletionPlugin(gedit.Plugin):
   """TextMate style autocompletion plugin for Gedit"""
-  
+
   # Where our configuration data is held
   ConfigRoot = '/apps/gedit-2/plugins/tm_autocomplete'
 
@@ -261,11 +261,11 @@ class AutoCompletionPlugin(gedit.Plugin):
     self.order = 'alphabetical'
     self.promote_last_accepted = False
     gedit.Plugin.__init__(self)
- 
+
   def activate(self, window):
     self.gconf_activate()
     self.update_ui(window)
-    
+
   def deactivate(self, window):
     for view in window.get_views():
       for handler_id in getattr(view, 'autocomplete_handlers', []):
@@ -273,7 +273,7 @@ class AutoCompletionPlugin(gedit.Plugin):
       setattr(view, 'autocomplete_handlers_attached', False)
     self.autocompleter = None   
     self.gconf_deactivate()
-    
+
   def update_ui(self, window):
     view = window.get_active_view()
     doc = window.get_active_document()
@@ -284,7 +284,7 @@ class AutoCompletionPlugin(gedit.Plugin):
         id1 = view.connect('key-press-event', self.on_key_press, doc)
         id2 = view.connect('button-press-event', self.on_button_press, doc)
         setattr(view, 'autocomplete_handlers', (id1, id2))
-   
+
   def on_key_press(self, view, event, doc):
     if event.keyval == self.trigger:
       if not self.autocompleter:
@@ -298,12 +298,12 @@ class AutoCompletionPlugin(gedit.Plugin):
     elif self.autocompleter:
       self.autocompleter = None
     return False
-  
+
   def on_button_press(self, view, event, doc):
     if self.autocompleter:
       self.autocompleter = None
     return False
-    
+
   def set_scope(self, scope):
     if scope != self.scope and scope in AutoCompleter.ValidScopes:
       self.scope = scope
@@ -334,15 +334,15 @@ class AutoCompletionPlugin(gedit.Plugin):
       self.gconf_set_defaults(self.gconf_client)
     else:
       self.gconf_configure(self.gconf_client)
-      
+
   def gconf_deactivate(self):
     self.gconf_client.notify_remove(self.notify_id)
     del self.notify_id
     del self.gconf_client
-    
+
   def gconf_key_for(self, name):
     return '/'.join([self.ConfigRoot, name])
-  
+
   def gconf_set_defaults(self, client):
     def set_string(name, value):
       client.set_string(self.gconf_key_for(name), value)
@@ -352,7 +352,7 @@ class AutoCompletionPlugin(gedit.Plugin):
     set_string('order', 'alphabetical')
     set_bool('promote', False)
     client.suggest_sync()
-  
+
   def gconf_configure(self, client):
     def get_string(name, default=None):
       value = client.get_string(self.gconf_key_for(name))
@@ -362,7 +362,7 @@ class AutoCompletionPlugin(gedit.Plugin):
     self.set_scope(get_string('scope'))
     self.set_order(get_string('order'))
     self.set_promote_last_accepted(get_bool('promote'))
-    
+
   def gconf_event(self, client, cnxn_id, entry, user_data):
     key, value = entry.get_key(), entry.get_value()
     name = key.split('/')[-1]
@@ -372,14 +372,14 @@ class AutoCompletionPlugin(gedit.Plugin):
       self.set_order(value.get_string())
     elif name == 'promote' and value is not None:
       self.set_promote_last_accepted(value.get_bool())
-      
+
   def is_configurable(self):
     return True
 
   def create_configure_dialog(self):
     dialog = ConfigurationDialog(self.gconf_client,self.ConfigRoot)
     return dialog
-    
+
 
 class ConfigurationDialog(gtk.Dialog):
   Title = 'Autocompletion settings'
@@ -402,7 +402,7 @@ class ConfigurationDialog(gtk.Dialog):
     self.set_resizable(False)
     close_button = self.add_button(gtk.STOCK_CLOSE, gtk.RESPONSE_CLOSE)
     close_button.grab_default()
-    close_button.connect('clicked', self.on_close, None)  
+    close_button.connect('clicked', self.on_close, None)
     # Scope configuration
     frame = gtk.Frame(self.ScopeFrameText)
     frame.set_shadow_type(gtk.SHADOW_NONE)
@@ -421,7 +421,7 @@ class ConfigurationDialog(gtk.Dialog):
     btn2 = scope_radio(self.ScopeWinText, 'window', btn1)
     btn3 = scope_radio(self.ScopeAppText, 'application', btn2)
     frame.add(scope_box)
-    self.vbox.pack_start(frame)    
+    self.vbox.pack_start(frame)
     # Order configuration
     frame = gtk.Frame(self.OrderFrameText)
     frame.set_shadow_type(gtk.SHADOW_NONE)
@@ -451,14 +451,14 @@ class ConfigurationDialog(gtk.Dialog):
   def on_close(self, widget, data=None):
     self.gconf_client.suggest_sync()
     gtk.Widget.destroy(self)
-	
+
   def _gconf_set_string(self, name, value):
     key = '/'.join((self.config_root, name))
     if self.gconf_client.get_string(key) != value:
       self.gconf_client.set_string(key, value)
       return True
     return False
-  
+
   def _gconf_get_string(self, name, default=None):
     key = '/'.join((self.config_root, name))
     value = self.gconf_client.get_string(key)
@@ -475,16 +475,18 @@ class ConfigurationDialog(gtk.Dialog):
     key = '/'.join((self.config_root, name))
     value = self.gconf_client.get_bool(key)
     return value if value is not None else default
-	
+
   def scope_configuration_change(self, widget, data=None):
     scope = widget.get_data(self.ScopeKey)
     if scope is not None and scope in AutoCompleter.ValidScopes:
       self._gconf_set_string(self.ScopeKey, scope)
-	
+
   def order_configuration_change(self, widget, data=None):
     order = widget.get_data(self.OrderKey)
     if order is not None and order in AutoCompleter.ValidOrders:
       self._gconf_set_string(self.OrderKey, order)
-  
+
   def promote_configuration_change(self, widget, data=None):
     self._gconf_set_bool(self.PromoteKey, widget.get_active())
+
+# ex:ts=2:sw=2:et:
