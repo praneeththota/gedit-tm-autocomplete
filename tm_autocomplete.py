@@ -24,16 +24,15 @@
 # 
 #
 
-__version__ = '1.0.5'
+__version__ = '1.0.5-gnome3'
 __author__ = 'Kevin McGuinness'
 
-import gedit
-import gtk
+from gi.repository import GObject, Gtk, Gdk, Gedit, PeasGtk, GConf
+
 import re
-import gconf
 
 # The default trigger: a (keyval, mod) pair
-DEFAULT_TRIGGER = (gtk.keysyms.Escape, 0)
+DEFAULT_TRIGGER = (Gdk.KEY_Escape, 0)
 
 def uniq_order_preserved(v):
   z, s = [], set()
@@ -123,8 +122,8 @@ class AutoCompleter(object):
     """Returns the words in the current document sorted by distance from 
        cursor.
     """
-    fwd_text = self.doc.get_text(self.iter_i, self.doc.get_end_iter())
-    bck_text = self.doc.get_text(self.doc.get_start_iter(), self.iter_s)
+    fwd_text = self.doc.get_text(self.iter_i, self.doc.get_end_iter(), False)
+    bck_text = self.doc.get_text(self.doc.get_start_iter(), self.iter_s, False)
     fwd_words = regex.findall(fwd_text)
     bck_words = regex.findall(bck_text)
     bck_words.reverse()
@@ -147,10 +146,10 @@ class AutoCompleter(object):
     """
     if self.scope == 'application':
       # Index all documents open in any gedit window
-      docs = gedit.app_get_default().get_documents()
+      docs = Gedit.app_get_default().get_documents()
     elif self.scope == 'window':
       # Index all documents in this gedit window
-      docs = gedit.app_get_default().get_active_window().get_documents()
+      docs = Gedit.app_get_default().get_active_window().get_documents()
     else:
       # No other documents in use
       docs = []
@@ -201,7 +200,7 @@ class AutoCompleter(object):
     if self._can_autocomplete_at(self.iter_i):
       self.iter_s = self._get_iter_for_beginning_of_word_at(self.iter_i)
       self.iter_e = self.iter_i.copy()
-      self.word = doc.get_text(self.iter_s, self.iter_i)
+      self.word = doc.get_text(self.iter_s, self.iter_i, False)
       self.matches = self._get_candidate_matches(doc, self.word)
       if self._should_promote_last_accepted(self.word):
         self.matches.remove(self.LastAcceptedMatch)
@@ -251,36 +250,46 @@ class AutoCompleter(object):
     return insert_ok
 
 
-class AutoCompletionPlugin(gedit.Plugin):
+class AutoCompletionPlugin(GObject.Object, Gedit.WindowActivatable,
+    PeasGtk.Configurable):
   """TextMate style autocompletion plugin for Gedit"""
+  
+  __gtype_name__ = "AutoCompletionPlugin"
+  __metaclass__ = GObject.GObjectMeta
 
   # Where our configuration data is held
   ConfigRoot = '/apps/gedit-2/plugins/tm_autocomplete'
+  
+  window = GObject.property(type=Gedit.Window)
 
   def __init__(self):
+    GObject.Object.__init__(self)
     self.autocompleter = None
     self.trigger = DEFAULT_TRIGGER
     self.scope = 'document'
     self.order = 'proximity'
     self.promote_last_accepted = True
-    gedit.Plugin.__init__(self)
+    self.gconf_client = None
 
-  def activate(self, window):
+  def do_activate(self):
     self.gconf_activate()
-    self.update_ui(window)
+    self.update_ui()
 
-  def deactivate(self, window):
-    for view in window.get_views():
+  def do_deactivate(self):
+    for view in self.window.get_views():
       for handler_id in getattr(view, 'autocomplete_handlers', []):
         view.disconnect(handler_id)
       setattr(view, 'autocomplete_handlers_attached', False)
     self.autocompleter = None   
     self.gconf_deactivate()
 
-  def update_ui(self, window):
-    view = window.get_active_view()
-    doc = window.get_active_document()
-    if isinstance(view, gedit.View) and doc:
+  def do_update_state(self):
+    self.update_ui()
+
+  def update_ui(self):
+    view = self.window.get_active_view()
+    doc = self.window.get_active_document()
+    if isinstance(view, Gedit.View) and doc:
       if not getattr(view, 'autocomplete_handlers_attached', False):
         setattr(view, 'autocomplete_handlers_attached', True)
         self.autocompleter = None
@@ -338,7 +347,7 @@ class AutoCompletionPlugin(gedit.Plugin):
   def set_trigger(self, trigger):
     if isinstance(trigger, str):
       try:
-        self.trigger = gtk.accelerator_parse(trigger)
+        self.trigger = Gtk.accelerator_parse(trigger)
       except:
         self.trigger = DEFAULT_TRIGGER
     elif isinstance(trigger, tuple):
@@ -348,13 +357,14 @@ class AutoCompletionPlugin(gedit.Plugin):
 
   def get_trigger_name(self):
     keyval, modifiers = self.trigger
-    return gtk.accelerator_name(keyval, modifiers or 0)
+    return Gtk.accelerator_name(keyval, modifiers or 0)
 
   def gconf_activate(self):
-    self.gconf_client = gconf.client_get_default()
-    self.gconf_client.add_dir(self.ConfigRoot, gconf.CLIENT_PRELOAD_NONE)
+    self.gconf_client = GConf.Client.get_default()
+    self.gconf_client.add_dir(self.ConfigRoot, 
+      GConf.ClientPreloadType.PRELOAD_NONE)
     self.notify_id = self.gconf_client.notify_add(
-      self.ConfigRoot, self.gconf_event)
+      self.ConfigRoot, self.gconf_event, None)
     self.gconf_set_defaults(self.gconf_client)
     self.gconf_configure(self.gconf_client)
 
@@ -404,16 +414,12 @@ class AutoCompletionPlugin(gedit.Plugin):
     elif name == 'trigger' and value is not None:
       self.set_trigger(value.get_string())
 
-  def is_configurable(self):
-    return True
-
-  def create_configure_dialog(self):
-    dialog = ConfigurationDialog(self.gconf_client,self.ConfigRoot)
-    return dialog
+  def do_create_configure_widget(self):
+    widget = ConfigurationWidget(self.ConfigRoot)
+    return widget
 
 
-class ConfigurationDialog(gtk.Dialog):
-  Title = 'Autocompletion settings'
+class ConfigurationWidget(Gtk.VBox):
   TriggerKey = 'trigger'
   TriggerText = '<b>Autocompletion trigger:</b>'
   ScopeKey = 'scope'
@@ -428,98 +434,94 @@ class ConfigurationDialog(gtk.Dialog):
   PromoteKey = 'promote'
   PromoteLastText = 'Promote last accepted match'
 
-  def __init__(self, gconf_client, config_root):
-    gtk.Dialog.__init__(self, self.Title, None, gtk.DIALOG_DESTROY_WITH_PARENT)
-    self.gconf_client = gconf_client
+  def __init__(self, config_root):
+    Gtk.VBox.__init__(self)
+    self.gconf_client = GConf.Client.get_default() 
     self.config_root = config_root
-    self.set_resizable(False)
-    mainbox = gtk.VBox()
+    mainbox = Gtk.VBox()
     mainbox.set_border_width(10)
     mainbox.set_spacing(10)
-    close_button = self.add_button(gtk.STOCK_CLOSE, gtk.RESPONSE_CLOSE)
-    close_button.grab_default()
-    close_button.connect('clicked', self.on_close, None)
     # Scope configuration
-    frame = gtk.Frame(self.ScopeFrameText)
-    frame.set_shadow_type(gtk.SHADOW_NONE)
+    frame = Gtk.Frame()
+    frame.set_label(self.ScopeFrameText)
+    frame.set_shadow_type(Gtk.ShadowType.NONE)
     frame.get_label_widget().set_use_markup(True)
-    scope_box = gtk.VBox(False, 0)
+    scope_box = Gtk.VBox(False, 0)
     scope_box.set_border_width(5)
     def scope_radio(text, scope, group=None):
-      btn = gtk.RadioButton(group, text)
+      btn = Gtk.RadioButton(group, text)
       btn.set_data(self.ScopeKey, scope)
-      btn.connect('toggled', self.scope_configuration_change, gconf_client)
+      btn.connect('toggled', self.scope_configuration_change, 
+        self.gconf_client)
       btn.set_active(self._gconf_get_string(self.ScopeKey) == scope)
-      scope_box.pack_start(btn)
+      scope_box.pack_start(btn, True, True, 0)
       return btn
     btn1 = scope_radio(self.ScopeDocText, 'document')
     btn2 = scope_radio(self.ScopeWinText, 'window', btn1)
     btn3 = scope_radio(self.ScopeAppText, 'application', btn2)
     frame.add(scope_box)
-    mainbox.pack_start(frame)
+    mainbox.pack_start(frame, True, True, 0)
     # Order configuration
-    frame = gtk.Frame(self.OrderFrameText)
-    frame.set_shadow_type(gtk.SHADOW_NONE)
+    frame = Gtk.Frame()
+    frame.set_label(self.OrderFrameText)
+    frame.set_shadow_type(Gtk.ShadowType.NONE)
     frame.get_label_widget().set_use_markup(True)
-    order_box = gtk.VBox(False, 0)
+    order_box = Gtk.VBox(False, 0)
     order_box.set_border_width(5)
     def order_radio(text, order, group=None):
-      btn = gtk.RadioButton(group, text)
+      btn = Gtk.RadioButton(group, text)
       btn.set_data(self.OrderKey, order)
-      btn.connect('toggled', self.order_configuration_change, gconf_client)
+      btn.connect('toggled', self.order_configuration_change, 
+        self.gconf_client)
       btn.set_active(self._gconf_get_string(self.OrderKey) == order)
-      order_box.pack_start(btn)
+      order_box.pack_start(btn, True, True, 0)
       return btn
     btn1 = order_radio(self.OrderAlphaText, 'alphabetical')
     btn2 = order_radio(self.OrderProximityText, 'proximity', btn1)
-    btn3 = gtk.CheckButton(self.PromoteLastText)
-    btn3.connect('toggled', self.promote_configuration_change, gconf_client)
+    btn3 = Gtk.CheckButton(self.PromoteLastText)
+    btn3.connect('toggled', self.promote_configuration_change, 
+      self.gconf_client)
     btn3.set_active(self._gconf_get_bool(self.PromoteKey))
-    order_box.pack_start(btn3)
+    order_box.pack_start(btn3, True, True, 0)
     frame.add(order_box)
-    mainbox.pack_start(frame)
+    mainbox.pack_start(frame, True, True, 0)
     # Autocompletion trigger
-    frame = gtk.Frame()
-    frame.set_shadow_type(gtk.SHADOW_NONE)
-    hbox = gtk.HBox()
+    frame = Gtk.Frame()
+    frame.set_shadow_type(Gtk.ShadowType.NONE)
+    hbox = Gtk.HBox()
     hbox.set_spacing(10)
-    label = gtk.Label(self.TriggerText)
+    label = Gtk.Label(self.TriggerText)
     label.set_use_markup(True)
     try:
       accel = self._gconf_get_string(self.TriggerKey, 'Escape')
-      self.trigger = gtk.accelerator_parse(accel)
+      self.trigger = Gtk.accelerator_parse(accel)
     except:
       self.trigger = DEFAULT_TRIGGER
-    entry = gtk.Entry()
+    entry = Gtk.Entry()
     entry.set_text(self.get_trigger_display_text())
     entry.connect('key-press-event', self.on_trigger_entry_key_press)
     entry.connect('focus-in-event', self.on_trigger_entry_focus_in)
     entry.connect('focus-out-event', self.on_trigger_entry_focus_out)
-    hbox.pack_start(label)
-    hbox.pack_start(entry)
+    hbox.pack_start(label, True, True, 0)
+    hbox.pack_start(entry, True, True, 0)
     frame.add(hbox)
-    mainbox.pack_start(frame)
+    mainbox.pack_start(frame, True, True, 0)
     # Show
-    self.vbox.pack_start(mainbox)
-    self.vbox.show_all()
-    self.show()
-
-  def on_close(self, widget, data=None):
-    self.gconf_client.suggest_sync()
-    gtk.Widget.destroy(self)
+    self.pack_start(mainbox, True, True, 0)
+    self.show_all()
 
   def on_trigger_entry_focus_in(self, entry, event):
     entry.set_text('Type a new shortcut')
 
   def on_trigger_entry_key_press(self, entry, event):
-    if event.keyval in (gtk.keysyms.Delete, gtk.keysyms.BackSpace):
+    if event.keyval in (Gdk.KEY_Delete, Gdk.KEY_BackSpace):
       entry.set_text('')
       self.set_trigger(DEFAULT_TRIGGER)
     elif self.is_valid_trigger(event.keyval, event.state):
-      modifiers = event.state & gtk.accelerator_get_default_mod_mask() 
+      modifiers = event.state & Gtk.accelerator_get_default_mod_mask() 
       self.set_trigger((event.keyval, modifiers))
       entry.set_text(self.get_trigger_display_text())
-    elif event.keyval == gtk.keysyms.Tab:
+    elif event.keyval == Gdk.KEY_Tab:
       return False
     return True
 
@@ -527,32 +529,32 @@ class ConfigurationDialog(gtk.Dialog):
     entry.set_text(self.get_trigger_display_text())
 
   def is_valid_trigger(self, keyval, mod):
-    mod &= gtk.accelerator_get_default_mod_mask()
-    if keyval == gtk.keysyms.Escape:
+    mod &= Gtk.accelerator_get_default_mod_mask()
+    if keyval == Gdk.KEY_Escape:
       return True
-    if mod and gtk.gdk.keyval_to_unicode(keyval):
+    if mod and Gdk.keyval_to_unicode(keyval):
       return True
     valid_keysyms = [
-      gtk.keysyms.Return,
-      gtk.keysyms.Tab,
-      gtk.keysyms.Left,
-      gtk.keysyms.Right,
-      gtk.keysyms.Up,
-      gtk.keysyms.Down ]
-    valid_keysyms.extend(range(gtk.keysyms.F1, gtk.keysyms.F12 + 1))
+      Gdk.KEY_Return,
+      Gdk.KEY_Tab,
+      Gdk.KEY_Left,
+      Gdk.KEY_Right,
+      Gdk.KEY_Up,
+      Gdk.KEY_Down ]
+    valid_keysyms.extend(range(Gdk.KEY_F1, Gdk.KEY_F12 + 1))
     return mod and keyval in valid_keysyms
 
   def set_trigger(self, trigger):
     if self.trigger != trigger:
       self.trigger = keyval, modifiers = trigger
-      accelerator = gtk.accelerator_name(keyval, modifiers or 0)
+      accelerator = Gtk.accelerator_name(keyval, modifiers or 0)
       self._gconf_set_string(self.TriggerKey, accelerator)
 
   def get_trigger_display_text(self):
     display_text = None
     if self.trigger is not None:
       keyval, modifiers = self.trigger
-      display_text = gtk.accelerator_get_label(keyval, modifiers or 0)
+      display_text = Gtk.accelerator_get_label(keyval, modifiers or 0)
     return display_text or ''
 
   def _gconf_set_string(self, name, value):
