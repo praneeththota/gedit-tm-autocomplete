@@ -27,7 +27,7 @@
 __version__ = '1.0.5-gnome3'
 __author__ = 'Kevin McGuinness'
 
-from gi.repository import GObject, Gtk, Gdk, Gedit, PeasGtk, GConf
+from gi.repository import GObject, Gtk, Gdk, Gedit, PeasGtk, Gio
 
 import re
 
@@ -136,7 +136,7 @@ class AutoCompleter(object):
     """
     iter1 = self.doc.get_start_iter()
     iter2 = self.doc.get_end_iter()
-    text = self.doc.get_text(iter1, iter2)
+    text = self.doc.get_text(iter1, iter2, False)
     words = set(regex.findall(text))
     return list(words)
 
@@ -146,17 +146,17 @@ class AutoCompleter(object):
     """
     if self.scope == 'application':
       # Index all documents open in any gedit window
-      docs = Gedit.app_get_default().get_documents()
+      docs = Gedit.App.get_default().get_documents()
     elif self.scope == 'window':
       # Index all documents in this gedit window
-      docs = Gedit.app_get_default().get_active_window().get_documents()
+      docs = Gedit.App.get_default().get_active_window().get_documents()
     else:
       # No other documents in use
       docs = []
     words = set()
     for doc in docs:
       if doc != self.doc:
-        text = doc.get_text(doc.get_start_iter(), doc.get_end_iter())
+        text = doc.get_text(doc.get_start_iter(), doc.get_end_iter(), False)
         words.update(regex.findall(text))
     return list(words)
 
@@ -255,11 +255,7 @@ class AutoCompletionPlugin(GObject.Object, Gedit.WindowActivatable,
   """TextMate style autocompletion plugin for Gedit"""
   
   __gtype_name__ = "AutoCompletionPlugin"
-  __metaclass__ = GObject.GObjectMeta
-
-  # Where our configuration data is held
-  ConfigRoot = '/apps/gedit-2/plugins/tm_autocomplete'
-  
+  SettingsKey = 'org.gnome.gedit.plugins.tm_autocomplete'
   window = GObject.property(type=Gedit.Window)
 
   def __init__(self):
@@ -269,10 +265,11 @@ class AutoCompletionPlugin(GObject.Object, Gedit.WindowActivatable,
     self.scope = 'document'
     self.order = 'proximity'
     self.promote_last_accepted = True
-    self.gconf_client = None
+    self.settings = Gio.Settings(self.SettingsKey)
+    self.settings_signal_handlers = []
 
   def do_activate(self):
-    self.gconf_activate()
+    self.activate_settings()
     self.update_ui()
 
   def do_deactivate(self):
@@ -281,7 +278,7 @@ class AutoCompletionPlugin(GObject.Object, Gedit.WindowActivatable,
         view.disconnect(handler_id)
       setattr(view, 'autocomplete_handlers_attached', False)
     self.autocompleter = None   
-    self.gconf_deactivate()
+    self.deactivate_settings()
 
   def do_update_state(self):
     self.update_ui()
@@ -359,63 +356,29 @@ class AutoCompletionPlugin(GObject.Object, Gedit.WindowActivatable,
     keyval, modifiers = self.trigger
     return Gtk.accelerator_name(keyval, modifiers or 0)
 
-  def gconf_activate(self):
-    self.gconf_client = GConf.Client.get_default()
-    self.gconf_client.add_dir(self.ConfigRoot, 
-      GConf.ClientPreloadType.PRELOAD_NONE)
-    self.notify_id = self.gconf_client.notify_add(
-      self.ConfigRoot, self.gconf_event, None)
-    self.gconf_set_defaults(self.gconf_client)
-    self.gconf_configure(self.gconf_client)
+  def activate_settings(self):
+    def on_promote_changed(settings, key, data):
+      self.set_promote_last_accepted(settings.get_boolean(key))
+    def on_scope_changed(settings, key, data):
+      self.set_scope(settings.get_string(key))
+    def on_order_changed(settings, key, data):
+      self.set_order(settings.get_string(key))
+    def on_trigger_changed(settings, key, data):
+      self.set_trigger(settings.get_string(key))
+    signals = (
+      ('changed::promote', on_promote_changed),
+      ('changed::scope', on_scope_changed),
+      ('changed::order', on_order_changed),
+      ('changed::trigger', on_trigger_changed))
+    self.settings_signal_handlers = [
+      self.settings.connect(s, f, None) for (s, f) in signals]
 
-  def gconf_deactivate(self):
-    self.gconf_client.notify_remove(self.notify_id)
-    del self.notify_id
-    del self.gconf_client
-
-  def gconf_key_for(self, name):
-    return '/'.join([self.ConfigRoot, name])
-
-  def gconf_set_defaults(self, client):
-    def set_string_default(name, value):
-      key = self.gconf_key_for(name)
-      if client.get(key) is None:
-        client.set_string(key, value)
-    def set_bool_default(name, value):
-      key = self.gconf_key_for(name)
-      if client.get(key) is None:
-        client.set_bool(key, value)
-    set_string_default('scope', self.scope)
-    set_string_default('order', self.order)
-    set_string_default('trigger', self.get_trigger_name())
-    set_bool_default('promote', self.promote_last_accepted)
-    client.suggest_sync()
-
-  def gconf_configure(self, client):
-    def get_string(name, default=None):
-      value = client.get_string(self.gconf_key_for(name))
-      return value if value is not None else default
-    def get_bool(name):
-      return client.get_bool(self.gconf_key_for(name))
-    self.set_scope(get_string('scope'))
-    self.set_order(get_string('order'))
-    self.set_trigger(get_string('trigger'))
-    self.set_promote_last_accepted(get_bool('promote'))
-
-  def gconf_event(self, client, cnxn_id, entry, user_data):
-    key, value = entry.get_key(), entry.get_value()
-    name = key.split('/')[-1]
-    if name == 'scope' and value is not None:
-      self.set_scope(value.get_string())
-    elif name == 'order' and value is not None:
-      self.set_order(value.get_string())
-    elif name == 'promote' and value is not None:
-      self.set_promote_last_accepted(value.get_bool())
-    elif name == 'trigger' and value is not None:
-      self.set_trigger(value.get_string())
+  def deactivate_settings(self):
+    map(self.settings.disconnect, self.settings_signal_handlers)
+    self.settings_signal_handlers = []
 
   def do_create_configure_widget(self):
-    widget = ConfigurationWidget(self.ConfigRoot)
+    widget = ConfigurationWidget(self.settings)
     return widget
 
 
@@ -434,10 +397,9 @@ class ConfigurationWidget(Gtk.VBox):
   PromoteKey = 'promote'
   PromoteLastText = 'Promote last accepted match'
 
-  def __init__(self, config_root):
+  def __init__(self, settings):
     Gtk.VBox.__init__(self)
-    self.gconf_client = GConf.Client.get_default() 
-    self.config_root = config_root
+    self.settings = settings 
     mainbox = Gtk.VBox()
     mainbox.set_border_width(10)
     mainbox.set_spacing(10)
@@ -449,11 +411,10 @@ class ConfigurationWidget(Gtk.VBox):
     scope_box = Gtk.VBox(False, 0)
     scope_box.set_border_width(5)
     def scope_radio(text, scope, group=None):
-      btn = Gtk.RadioButton(group, text)
+      btn = Gtk.RadioButton.new_with_label_from_widget(group, text)
       btn.set_data(self.ScopeKey, scope)
-      btn.connect('toggled', self.scope_configuration_change, 
-        self.gconf_client)
-      btn.set_active(self._gconf_get_string(self.ScopeKey) == scope)
+      btn.set_active(self.settings.get_string(self.ScopeKey) == scope)
+      btn.connect('toggled', self.scope_configuration_change, self.settings)
       scope_box.pack_start(btn, True, True, 0)
       return btn
     btn1 = scope_radio(self.ScopeDocText, 'document')
@@ -469,19 +430,17 @@ class ConfigurationWidget(Gtk.VBox):
     order_box = Gtk.VBox(False, 0)
     order_box.set_border_width(5)
     def order_radio(text, order, group=None):
-      btn = Gtk.RadioButton(group, text)
+      btn = Gtk.RadioButton.new_with_label_from_widget(group, text)
       btn.set_data(self.OrderKey, order)
-      btn.connect('toggled', self.order_configuration_change, 
-        self.gconf_client)
-      btn.set_active(self._gconf_get_string(self.OrderKey) == order)
+      btn.set_active(self.settings.get_string(self.OrderKey) == order)
+      btn.connect('toggled', self.order_configuration_change, self.settings)
       order_box.pack_start(btn, True, True, 0)
       return btn
     btn1 = order_radio(self.OrderAlphaText, 'alphabetical')
     btn2 = order_radio(self.OrderProximityText, 'proximity', btn1)
     btn3 = Gtk.CheckButton(self.PromoteLastText)
-    btn3.connect('toggled', self.promote_configuration_change, 
-      self.gconf_client)
-    btn3.set_active(self._gconf_get_bool(self.PromoteKey))
+    btn3.connect('toggled', self.promote_configuration_change, self.settings)
+    btn3.set_active(self.settings.get_boolean(self.PromoteKey))
     order_box.pack_start(btn3, True, True, 0)
     frame.add(order_box)
     mainbox.pack_start(frame, True, True, 0)
@@ -493,7 +452,7 @@ class ConfigurationWidget(Gtk.VBox):
     label = Gtk.Label(self.TriggerText)
     label.set_use_markup(True)
     try:
-      accel = self._gconf_get_string(self.TriggerKey, 'Escape')
+      accel = self.settings.get_string(self.TriggerKey)
       self.trigger = Gtk.accelerator_parse(accel)
     except:
       self.trigger = DEFAULT_TRIGGER
@@ -548,7 +507,7 @@ class ConfigurationWidget(Gtk.VBox):
     if self.trigger != trigger:
       self.trigger = keyval, modifiers = trigger
       accelerator = Gtk.accelerator_name(keyval, modifiers or 0)
-      self._gconf_set_string(self.TriggerKey, accelerator)
+      self.settings.set_string(self.TriggerKey, accelerator)
 
   def get_trigger_display_text(self):
     display_text = None
@@ -557,41 +516,17 @@ class ConfigurationWidget(Gtk.VBox):
       display_text = Gtk.accelerator_get_label(keyval, modifiers or 0)
     return display_text or ''
 
-  def _gconf_set_string(self, name, value):
-    key = '/'.join((self.config_root, name))
-    if self.gconf_client.get_string(key) != value:
-      self.gconf_client.set_string(key, value)
-      return True
-    return False
-
-  def _gconf_get_string(self, name, default=None):
-    key = '/'.join((self.config_root, name))
-    value = self.gconf_client.get_string(key)
-    return value if value is not None else default
-
-  def _gconf_set_bool(self, name, value):
-    key = '/'.join((self.config_root, name))
-    if self.gconf_client.get_bool(key) != value:
-      self.gconf_client.set_bool(key, value)
-      return True
-    return False
-
-  def _gconf_get_bool(self, name, default=None):
-    key = '/'.join((self.config_root, name))
-    value = self.gconf_client.get_bool(key)
-    return value if value is not None else default
-
   def scope_configuration_change(self, widget, data=None):
     scope = widget.get_data(self.ScopeKey)
     if scope is not None and scope in AutoCompleter.ValidScopes:
-      self._gconf_set_string(self.ScopeKey, scope)
+      self.settings.set_string(self.ScopeKey, scope)
 
   def order_configuration_change(self, widget, data=None):
     order = widget.get_data(self.OrderKey)
     if order is not None and order in AutoCompleter.ValidOrders:
-      self._gconf_set_string(self.OrderKey, order)
+      self.settings.set_string(self.OrderKey, order)
 
   def promote_configuration_change(self, widget, data=None):
-    self._gconf_set_bool(self.PromoteKey, widget.get_active())
+    self.settings.set_boolean(self.PromoteKey, widget.get_active())
 
 # ex:ts=2:sw=2:et:

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.gedit.plugins.tm_autocomplete" 
+        path="/org/gnome/gedit/plugins/tm_autocomplete/">
+        
+    <key type="s" name="scope">
+      <default>'document'</default>
+      <summary>Auto-completion scope</summary>
+      <description>
+        Auto-completion scope (document|window|application).
+      </description>
+    </key>
+    
+    <key type="s" name="order">
+      <default>'alphabetical'</default>
+      <summary>Search order</summary>
+      <description>
+        Order to search words (alphabetical|proximity).
+      </description>
+    </key>
+    
+    <key type="s" name="trigger">
+      <default>'Escape'</default>
+      <summary>Auto-completion trigger</summary>
+      <description>
+        Auto-completion keyboard shortcut.
+      </description>
+    </key>
+    
+    <key type="b" name="promote">
+      <default>true</default>
+      <summary>Promote last accepted match</summary>
+      <description>
+        Promote last accepted match to top of match list.
+      </description>
+    </key>
+  </schema>
+</schemalist>
