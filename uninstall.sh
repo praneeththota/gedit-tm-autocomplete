@@ -12,7 +12,7 @@ if [ -f $PLUGIN_FOLDER/tm_autocomplete.pyc ]; then
   rm $PLUGIN_FOLDER/tm_autocomplete.pyc
 fi
 
-if [ -f $PLUGIN_FOLDER/tm_autocomplete.gedit-plugin ]; then
+if [ -f $PLUGIN_FOLDER/tm_autocomplete.plugin ]; then
   rm $PLUGIN_FOLDER/tm_autocomplete.plugin
 fi
 
